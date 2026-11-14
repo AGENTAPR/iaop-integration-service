@@ -1,18 +1,27 @@
-//! OpenAPI 3.1 document generation.
-//!
-//! Baseline document is generated from `utoipa`. Path annotations are added
-//! as real endpoints are implemented; `iaop-api-contracts` remains the
-//! canonical contract source of truth.
+//! OpenAPI 3.1 document generation for Integration Platform.
 
 use utoipa::OpenApi;
+
+use crate::dto::*;
 
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "Integration Platform API",
         version = "0.1.0",
-        description = "IAOP Integration Platform service API. Contracts are governed by iaop-api-contracts."
+        description = "IAOP Integration Platform service API. Manages durable external operations, connectors, callbacks, and reconciliations."
     ),
-    servers((url = "/"))
+    servers((url = "/")),
+    components(schemas(
+        HealthResponse,
+        SystemInfoResponse,
+        SubmitOperationDto,
+        OperationResponseDto,
+        AttemptResponseDto,
+        ProviderResponseDto,
+        CallbackResponseDto,
+        ReconcileRequestDto,
+        ReconcileResponseDto
+    ))
 )]
 pub struct ApiDoc;

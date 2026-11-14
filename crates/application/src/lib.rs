@@ -5,5 +5,10 @@
 //! Depends only on the `domain` crate — never on Axum, SQLx, or other
 //! infrastructure. Adapters in `infrastructure` implement the ports.
 
+pub mod commands;
+pub mod error;
 pub mod ports;
+pub mod queries;
 pub mod service_info;
+
+pub use error::AppError;

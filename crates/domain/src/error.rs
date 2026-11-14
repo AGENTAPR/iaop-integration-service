@@ -17,6 +17,9 @@ pub enum DomainError {
 
     #[error("operation not permitted in current state")]
     InvalidState,
+
+    #[error("invalid state transition from {from} to {to}")]
+    InvalidStateTransition { from: String, to: String },
 }
 
 impl DomainError {

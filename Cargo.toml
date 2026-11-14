@@ -35,8 +35,11 @@ sqlx = { version = "0.8", features = [
 ] }
 axum = "0.8"
 tower = "0.5"
-utoipa = "5"
+utoipa = { version = "5", features = ["chrono", "uuid"] }
 anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+hmac = "0.12"
+sha2 = "0.10"
 
 [package]
 name = "iaop-integration-service"
@@ -60,6 +63,7 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+sqlx.workspace = true
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

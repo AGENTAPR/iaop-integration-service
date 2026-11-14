@@ -1,14 +1,23 @@
 //! Composition root for Integration Platform.
 //!
-//! Wires configuration, persistence, and the HTTP router, then serves with
-//! graceful shutdown on SIGINT/SIGTERM.
+//! Wires configuration, persistence, connectors, the background outbox publisher,
+//! the background operation dispatcher worker, and the HTTP router, then serves
+//! with graceful shutdown on SIGINT/SIGTERM.
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use iaop_integration_service_api::{AppState, build_router};
+use iaop_integration_service_infrastructure::callback_verifier::CallbackVerifier;
 use iaop_integration_service_infrastructure::config::AppConfig;
+use iaop_integration_service_infrastructure::connectors::ConnectorDispatcherImpl;
+use iaop_integration_service_infrastructure::outbox;
 use iaop_integration_service_infrastructure::persistence;
+use iaop_integration_service_infrastructure::store::PgIntegrationStore;
+use iaop_integration_service_infrastructure::transport::{
+    ConfiguredTransport, KafkaTransport, LogTransport,
+};
+use iaop_integration_service_infrastructure::worker;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,9 +49,64 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let store = db
+        .as_ref()
+        .map(|pool| Arc::new(PgIntegrationStore::new(pool.clone())));
+    let dispatcher = Arc::new(ConnectorDispatcherImpl::new(
+        &config.connector_mode,
+        config.is_production,
+    ));
+    let verifier = Arc::new(CallbackVerifier::new(config.callback_secret.clone()));
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // ---- outbox publisher (only with DB) --------------------------------
+    if let Some(pool) = &db {
+        let publisher_pool = pool.clone();
+        let transport = Arc::new(match config.event_transport.as_str() {
+            "kafka" => {
+                let brokers = config
+                    .kafka_brokers
+                    .clone()
+                    .unwrap_or_else(|| "127.0.0.1:9092".to_string());
+                ConfiguredTransport::Kafka(KafkaTransport::new(
+                    brokers,
+                    config.kafka_topic_prefix.clone(),
+                ))
+            }
+            _ => ConfiguredTransport::Log(LogTransport),
+        });
+        let poll = config.outbox_poll_interval;
+        let batch = config.outbox_batch_size;
+        let max_attempts = config.outbox_max_attempts;
+        let rx = shutdown_rx.clone();
+
+        tokio::spawn(async move {
+            outbox::run_publisher(publisher_pool, transport, poll, batch, max_attempts, rx).await;
+        });
+        tracing::info!("outbox publisher started");
+    }
+
+    // ---- operation worker (only with DB) --------------------------------
+    if let Some(s) = &store {
+        let op_store = s.clone();
+        let op_dispatcher = dispatcher.clone();
+        let poll = std::time::Duration::from_millis(1000);
+        let batch = 25;
+        let rx = shutdown_rx.clone();
+
+        tokio::spawn(async move {
+            worker::run_operation_worker(op_store, op_dispatcher, poll, batch, rx).await;
+        });
+        tracing::info!("operation worker started");
+    }
+
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
+        store,
+        dispatcher,
+        verifier,
     };
     let app = build_router(state);
 
@@ -52,7 +116,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %config.bind_addr, "listening");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            let _ = shutdown_tx.send(true);
+        })
         .await
         .context("server error")?;
 
